@@ -120,8 +120,8 @@ int main() {
     string key = "mi_clave_secreta"; // Clave secreta para cifrar los datos
 
     PatientInfo patientInfo = getPatientInfoFromCommandLine();
-    string jpgFileName = "imagen.jpg";
-    string outputFileName = "imagen_encrypted.mex";
+    string jpgFileName = "Tigre.jpg";
+    string outputFileName = "imagenEncriptada.mex";
 
     createEncryptedFile(jpgFileName, outputFileName, patientInfo, key);
 

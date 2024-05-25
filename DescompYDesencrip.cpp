@@ -3,7 +3,6 @@
 #include <vector>
 #include <sstream>
 #include <cstdint>
-#include <cstring>
 #include <jpeglib.h>
 
 using namespace std;
@@ -23,51 +22,54 @@ struct PatientInfo {
 };
 
 string decryptData(const string& encryptedData, const string& key) {
-    // Aquí implementarías tu algoritmo de descifrado, por ejemplo, DES
-    // Por simplicidad, este código simplemente devuelve los datos sin modificar
+    // Aquí implementa tu algoritmo de descifrado
     return encryptedData;
 }
 
-void readEncryptedFile(const string& inputFileName, string& encryptedData) {
+void readEncryptedFile(const string& inputFileName, ImageInfo& imageInfo, PatientInfo& patientInfo, const string& key) {
     ifstream inputFile(inputFileName, ios::binary);
     if (!inputFile.is_open()) {
         cerr << "Error: No se pudo abrir el archivo " << inputFileName << " para lectura." << endl;
-        exit(1);
+        return;
     }
 
-    inputFile.seekg(0, ios::end);
-    size_t fileSize = inputFile.tellg();
-    inputFile.seekg(0, ios::beg);
+    stringstream encryptedDataStream;
+    encryptedDataStream << inputFile.rdbuf();
+    string encryptedData = encryptedDataStream.str();
 
-    encryptedData.resize(fileSize);
-    inputFile.read(encryptedData.data(), fileSize);
+    string decryptedData = decryptData(encryptedData, key);
+
+    // Extraer metadatos del encabezado
+    stringstream headerStream(decryptedData.substr(0, decryptedData.find("}") + 1));
+    char comma;
+    headerStream >> comma; // Consumir el primer '{'
+    headerStream >> comma; // Consumir el primer '"'
+
+    headerStream >> comma; // Ignorar el primer '"'
+    headerStream >> imageInfo.height >> comma >> imageInfo.width >> comma;
+    headerStream >> comma; // Ignorar el segundo '"'
+    headerStream.ignore(1); // Ignorar la coma
+    getline(headerStream, patientInfo.sex, '"');
+    headerStream >> comma;
+    headerStream.ignore(1);
+    getline(headerStream, patientInfo.patientName, '"');
+    headerStream >> comma;
+    headerStream.ignore(1);
+    getline(headerStream, patientInfo.patientLastName, '"');
+    headerStream >> comma;
+    headerStream.ignore(1);
+    getline(headerStream, patientInfo.date, '"');
+
+    // Extraer datos de la imagen
+    imageInfo.imageData = vector<uint8_t>(decryptedData.begin() + headerStream.tellg(), decryptedData.end());
+
     inputFile.close();
 }
 
-ImageInfo extractImageInfo(const string& encryptedData) {
-    // Simplemente tomamos los últimos bytes como los datos de la imagen
-    ImageInfo imageInfo;
-    size_t headerSize = encryptedData.find_first_of('{');
-    imageInfo.imageData = vector<uint8_t>(encryptedData.begin() + headerSize, encryptedData.end());
-    return imageInfo;
-}
-
-PatientInfo extractPatientInfo(const string& encryptedData) {
-    // Aquí implementarías la extracción de los metadatos del paciente
-    // Por simplicidad, este código simplemente devuelve información ficticia
-    PatientInfo patientInfo;
-    patientInfo.patientName = "Juan";
-    patientInfo.patientLastName = "Pérez";
-    patientInfo.age = 30;
-    patientInfo.sex = "Masculino";
-    patientInfo.date = "2024-05-30";
-    return patientInfo;
-}
-
-void writeJPEG(const string& fileName, const ImageInfo& imageInfo) {
-    FILE* outfile = fopen(fileName.c_str(), "wb");
+void writeJPEG(const string& outputFileName, const ImageInfo& imageInfo) {
+    FILE* outfile = fopen(outputFileName.c_str(), "wb");
     if (!outfile) {
-        cerr << "Error: No se pudo abrir el archivo " << fileName << " para escritura." << endl;
+        cerr << "Error: No se pudo abrir el archivo " << outputFileName << " para escritura." << endl;
         return;
     }
 
@@ -84,41 +86,44 @@ void writeJPEG(const string& fileName, const ImageInfo& imageInfo) {
     cinfo.in_color_space = JCS_RGB;
 
     jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, 75, TRUE);
+
     jpeg_start_compress(&cinfo, TRUE);
 
-    int row_stride = imageInfo.width * 3;
-    vector<uint8_t> imageDataCopy = imageInfo.imageData;  // Copiar los datos de la imagen a un nuevo vector
+    vector<uint8_t> scanlineBuffer(imageInfo.width * 3);
+    JSAMPROW rowPointer = &scanlineBuffer[0];
     while (cinfo.next_scanline < cinfo.image_height) {
-        JSAMPROW row_pointer = &imageDataCopy[cinfo.next_scanline * row_stride];
-        jpeg_write_scanlines(&cinfo, &row_pointer, 1);
+        int offset = cinfo.next_scanline * imageInfo.width * 3;
+        for (int i = 0; i < imageInfo.width * 3; ++i) {
+            scanlineBuffer[i] = imageInfo.imageData[offset + i];
+        }
+        jpeg_write_scanlines(&cinfo, &rowPointer, 1);
     }
 
     jpeg_finish_compress(&cinfo);
-    fclose(outfile);
     jpeg_destroy_compress(&cinfo);
 
-    cout << "Imagen JPEG escrita en " << fileName << endl;
+    fclose(outfile);
+
+    cout << "Imagen desencriptada guardada como " << outputFileName << endl;
 }
 
-
 int main() {
-    string key = "mi_clave_secreta"; // La misma clave utilizada para cifrar los datos
+    string key = "mi_clave_secreta"; // Clave secreta para descifrar los datos
 
-    string inputFileName = "imagen_encrypted.mex"; // Nombre del archivo cifrado
-    string encryptedData;
-    readEncryptedFile(inputFileName, encryptedData);
+    ImageInfo imageInfo;
+    PatientInfo patientInfo;
+    string inputFileName = "imagenEncriptada.mex";
+    string outputFileName = "imagenRecuperada.jpg";
 
-    string decryptedData = decryptData(encryptedData, key);
-    ImageInfo imageInfo = extractImageInfo(decryptedData);
-    PatientInfo patientInfo = extractPatientInfo(decryptedData);
+    readEncryptedFile(inputFileName, imageInfo, patientInfo, key);
 
-    cout << "Datos del paciente:" << endl;
-    cout << "Nombre: " << patientInfo.patientName << " " << patientInfo.patientLastName << endl;
-    cout << "Edad: " << patientInfo.age << endl;
-    cout << "Sexo: " << patientInfo.sex << endl;
+    cout << "Metadatos de la imagen:" << endl;
+    cout << "Nombre del paciente: " << patientInfo.patientName << " " << patientInfo.patientLastName << endl;
+    cout << "Edad del paciente: " << patientInfo.age << endl;
+    cout << "Sexo del paciente: " << patientInfo.sex << endl;
     cout << "Fecha: " << patientInfo.date << endl;
 
-    string outputFileName = "imagen_recuperada.jpg";
     writeJPEG(outputFileName, imageInfo);
 
     return 0;
